@@ -1,12 +1,15 @@
 /*
 
-$Header$
+$Header: /home/atkeizer/avr/brouwtomaat/lcd.c,v 1.1 2016/04/30 08:44:16 atkeizer Exp atkeizer $
 
-$Log: brouwtomaat.c,v $
+$Log: lcd.c,v $
+Revision 1.1  2016/04/30 08:44:16  atkeizer
+Initial revision
+
 
 */
 
-static char rcsid[] = "$Id$";
+static char rcsid[] = "$Id: lcd.c,v 1.1 2016/04/30 08:44:16 atkeizer Exp atkeizer $";
 
 #include <avr/io.h>
 #include <util/delay.h>
