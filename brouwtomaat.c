@@ -1,32 +1,13 @@
 /*
 
-$Header$
+$Header: /home/atkeizer/avr/brouwtomaat/brouwtomaat.c,v 1.1 2016/04/30 08:40:29 atkeizer Exp $
 
-$Log$
-
-*/
-
-static char rcsid[] = "$Id$";
+$Log: brouwtomaat.c,v $
+Revision 1.1  2016/04/30 08:40:29  atkeizer
+Initial revision
 
 
-
-#include "lcd.h"
-#include "onewire.h"
-#include "uart.h"
-#include <avr/io.h>
-#include <stdio.h>
-#include <util/delay.h>
-#include <avr/eeprom.h>
-#include <avr/pgmspace.h>
-#include <avr/interrupt.h>
-
-//void send_setup(void);
-char button_pressed(void);
-void control(char);
-
-
-
-/*  Arduino port mappings
+ Arduino port mappings
    D0-7  = PortD 0-7
    D8-13 = PortB 0-5
    A0-5  = PortC 0-5
@@ -47,6 +28,27 @@ void control(char);
 #define MAX_DEV 1
 unsigned char addr[MAX_DEV][8];
 char num_dev;
+
+#include "lcd.h"
+#include "onewire.h"
+#include "uart.h"
+#include <avr/io.h>
+#include <stdio.h>
+#include <util/delay.h>
+#include <avr/eeprom.h>
+#include <avr/pgmspace.h>
+#include <avr/interrupt.h>
+
+
+void uart_putchar(char c, FILE *stream) {
+   if (c == '\n') {
+       uart_putchar('\r', stream);
+   }
+   uart_putc(c);
+}
+
+static FILE mystdout = FDEV_SETUP_STREAM(uart_putchar, NULL, _FDEV_SETUP_WRITE);
+
 unsigned int temperatures[MAX_DEV];
 
 // timer 0 used for time keeping
@@ -131,7 +133,7 @@ char step_elapsed;
 char step_reached = 0;
 int temperature;
 char state = PREPARE;
-char mash_step_nmbr = 0;
+uint8_t mash_step_nmbr = 0;
 char cont = 0;
 char ssr_duty = 0;
 char pump_duty = 75;
@@ -177,85 +179,57 @@ char button_pressed(void) {
 }
 
 void send_setup(void) {
-   char buf[50];
    char *string_format = PSTR("%18S = %s\n");
    char *number_format = PSTR("%18S = %d\n");
-   sprintf_P( buf, number_format, PSTR("Preheat temp"), prht_tmp );
-   uart_puts( buf );
-   sprintf_P( buf, number_format, PSTR("Boil time"), boil_time );
-   uart_puts( buf );
-   sprintf_P( buf, number_format, PSTR("Boil duty cycle"), boil_duty );
-   uart_puts( buf );
-   sprintf_P( buf, number_format, PSTR("Preboil time"), preboil_time );
-   uart_puts( buf );
-   sprintf_P( buf, number_format, PSTR("Preboil duty"), preboil_duty );
-   uart_puts( buf );
-   sprintf_P( buf, number_format, PSTR("Preboil temp"), preboil_temp );
-   uart_puts( buf );
-   sprintf_P( buf, number_format, PSTR("PI control Ki"), picontrol_ki );
-   uart_puts( buf );
-   sprintf_P( buf, number_format, PSTR("PI control Kp"), picontrol_kp );
-   uart_puts( buf );
-   sprintf_P( buf, number_format, PSTR("One wire dev"), num_dev );
-   uart_puts( buf );
+   printf_P( number_format, PSTR("Preheat temp"), prht_tmp );
+   printf_P( number_format, PSTR("Boil time"), boil_time );
+   printf_P( number_format, PSTR("Preboil time"), preboil_time );
+   printf_P( number_format, PSTR("Preboil duty"), preboil_duty );
+   printf_P( number_format, PSTR("Preboil temp"), preboil_temp );
+   printf_P( number_format, PSTR("PI control Ki"), picontrol_ki );
+   printf_P( number_format, PSTR("PI control Kp"), picontrol_kp );
+   printf_P( number_format, PSTR("One wire dev"), num_dev );
    for (int i=0;i<step_cnt;i++) {
       uart_puts("+++++++++++ Mash Step +++++++++++\n");
       eeprom_read_block( &mash_step_tmp, &ee_mash_schedule[i], sizeof(mash_step_tmp) );
-      sprintf_P( buf, number_format, PSTR("Mash step"), i);
-      uart_puts( buf );
-      sprintf_P( buf, string_format, PSTR("Step name"), mash_step_tmp.name );
-      uart_puts( buf );
-      sprintf_P( buf, number_format, PSTR("Temperature"), mash_step_tmp.temperature );
-      uart_puts( buf );
-      sprintf_P( buf, number_format, PSTR("Duration"), mash_step_tmp.duration );
-      uart_puts( buf );
+      printf_P( number_format, PSTR("Mash step"), i);
+      printf_P( string_format, PSTR("Step name"), mash_step_tmp.name );
+      printf_P( number_format, PSTR("Temperature"), mash_step_tmp.temperature );
+      printf_P( number_format, PSTR("Duration"), mash_step_tmp.duration );
    }
 }
 
 void send_status(void) {
-   char buf[50];
    char *string_format = PSTR("%18S = %S\n");
    char *ram_string_format = PSTR("%18S = %s\n");
    char *number_format = PSTR("%18S = %d\n");
    char *time_format = PSTR("%02d:%02d:%02d\n");
-   sprintf_P( buf, time_format, running_time.h, running_time.m, running_time.s);
-   uart_puts(buf);
+   printf_P( time_format, running_time.h, running_time.m, running_time.s);
    switch ( state ) {
    case PREPARE:
-      sprintf_P(buf, string_format, PSTR("State"), PSTR("preparing"));
-      uart_puts( buf );
+      printf_P( string_format, PSTR("State"), PSTR("preparing"));
       break;
    case PREHEAT:
-      sprintf_P(buf, string_format, PSTR("State"), PSTR("preheating"));
-      uart_puts( buf );
+      printf_P( string_format, PSTR("State"), PSTR("preheating"));
       break;
    case MASH:
-      sprintf_P(buf, string_format, PSTR("State"), PSTR("mashing"));
-      uart_puts( buf );
-      sprintf_P(buf, number_format, PSTR("Step number"), mash_step_nmbr);
-      uart_puts( buf );
-      sprintf_P(buf, ram_string_format, PSTR("Step name"), mash_step_tmp.name);
-      uart_puts( buf );
-      sprintf_P(buf, number_format, PSTR("Step temperature"), mash_step_tmp.temperature);
-      uart_puts( buf );
-      sprintf_P(buf, number_format, PSTR("Step duration"), mash_step_tmp.duration);
-      uart_puts( buf );
-      sprintf_P(buf, number_format, PSTR("Step elapsed"), step_elapsed);
-      uart_puts( buf );
+      printf_P( string_format, PSTR("State"), PSTR("mashing"));
+      printf_P( number_format, PSTR("Step number"), mash_step_nmbr);
+      printf_P( ram_string_format, PSTR("Step name"), mash_step_tmp.name);
+      printf_P( number_format, PSTR("Step temperature"), mash_step_tmp.temperature);
+      printf_P( number_format, PSTR("Step duration"), mash_step_tmp.duration);
+      printf_P( number_format, PSTR("Step elapsed"), step_elapsed);
       break;
    case BOIL:
-      sprintf_P(buf, string_format, PSTR("State"), PSTR("boiling"));
-      sprintf_P(buf, number_format, PSTR("Boil time elapsed"), step_elapsed);
+      printf_P( string_format, PSTR("State"), PSTR("boiling"));
+      printf_P( number_format, PSTR("Boil time elapsed"), step_elapsed);
    case COOL:
-      sprintf_P(buf, string_format, PSTR("State"), PSTR("cooling"));
+      printf_P( string_format, PSTR("State"), PSTR("cooling"));
    }
-   sprintf_P(buf, number_format, PSTR("Temperature"), temperature);
-   uart_puts( buf );
-   sprintf_P(buf, number_format, PSTR("SSR duty cycle"), ssr_duty);
-   uart_puts( buf );
-   sprintf_P(buf, number_format, PSTR("PUMP duty cycle"), pump_duty);
-   uart_puts( buf );
-   uart_puts("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n");
+   printf_P( number_format, PSTR("Temperature"), temperature);
+   printf_P( number_format, PSTR("SSR duty cycle"), ssr_duty);
+   printf_P( number_format, PSTR("PUMP duty cycle"), pump_duty);
+   printf("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n");
 } 
 
 void control(char set_point) {
@@ -277,6 +251,7 @@ void control(char set_point) {
 
 
 int main(void) {
+   stdout = &mystdout;
    lcd_init();
    uart0_init(UART_BAUD_SELECT(9600, F_CPU));
    init_timer0(); 
