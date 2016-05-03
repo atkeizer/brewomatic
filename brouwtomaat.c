@@ -1,8 +1,11 @@
 /*
 
-$Header: /home/atkeizer/avr/brouwtomaat/brouwtomaat.c,v 1.1 2016/04/30 08:40:29 atkeizer Exp $
+$Header: /home/atkeizer/avr/brouwtomaat/RCS/brouwtomaat.c,v 1.2 2016/04/30 09:36:57 atkeizer Exp $
 
 $Log: brouwtomaat.c,v $
+Revision 1.2  2016/04/30 09:36:57  atkeizer
+stdio stream output on stdout
+
 Revision 1.1  2016/04/30 08:40:29  atkeizer
 Initial revision
 
@@ -32,6 +35,8 @@ char num_dev;
 #include "lcd.h"
 #include "onewire.h"
 #include "uart.h"
+#include "button.h"
+
 #include <avr/io.h>
 #include <stdio.h>
 #include <util/delay.h>
@@ -59,14 +64,6 @@ struct time {
    uint8_t s;
 };
 struct time running_time = {0, 0, 0};
-
-// buttons - 5 least significant bits shifted out (/32)
-#define RIGHT  0x000
-#define UP     0x001
-#define DOWN   0x010
-#define LEFT   0x011
-#define ENTER  0x100
-#define NONE   0x111
 
 #define TMP_MEAS_INTVL    2000
 #define UPD_DISP_INTVL    1000
@@ -251,12 +248,15 @@ void control(char set_point) {
 
 
 int main(void) {
+   uint8_t button = 0;
    stdout = &mystdout;
    lcd_init();
+   lcd_puts("initialized");
+   _delay_ms(1000);
    uart0_init(UART_BAUD_SELECT(9600, F_CPU));
+   init_adc();
    init_timer0(); 
    sei();
-   send_status();
    step_cnt     = eeprom_read_byte( &ee_step_cnt );
    prht_tmp     = eeprom_read_byte( &ee_prht_tmp );
    boil_time    = eeprom_read_byte( &ee_boil_time );
@@ -266,8 +266,7 @@ int main(void) {
    preboil_temp = eeprom_read_byte( &ee_preboil_temp );
    picontrol_ki = eeprom_read_byte( &ee_picontrol_ki );
    picontrol_kp = eeprom_read_byte( &ee_picontrol_kp );
-   //TCCR2B = TCCR2B & B11111000 | B00000001; //set timer 2 for PWM frequency of 31372.55Hz on pin D3 & D11
-   ds18b20_10bit(); // set resolution of ds18b20 
+//   ds18b20_10bit(); // set resolution of ds18b20 
    send_setup();
    while(1) {
 //   if ( (millis() / TMP_MEAS_INTVL) > tmp_meas_count ) {
@@ -276,76 +275,100 @@ int main(void) {
 //      //and start next conversion
 //      ds18b20_conv();
 //   }
-   if ( (millis() / UPD_DISP_INTVL) > upd_disp_count) {
-      upd_disp_count++;
-      //update_display(); 
-   }
-   if ( (millis() / SEND_STATUS_INTVL) > send_status_count) {
-      send_status_count++;
-      send_status();
-   }
-   if ( (millis() / CONTROL_INTVL) > control_count) {
-      control_count++;
-      switch ( state ) {
-      case PREHEAT:
-         control(ee_prht_tmp);
-         if (cont) {     // wait until user tells to continue
-            state = MASH;
-            eeprom_read_block( &mash_step_tmp, &ee_mash_schedule[0], sizeof(mash_step_tmp) );
-         }
-         break;
-      case MASH:
-         control(mash_step_tmp.temperature);
-         if ( step_reached ) {
-            step_elapsed = millis() / 3600 - step_start;
-            if ( step_elapsed >= mash_step_tmp.duration ) { // end of step
-               if ( mash_step_nmbr < ee_step_cnt ) {  // more steps 
-                  mash_step_nmbr++;
+      if ( (millis() / UPD_DISP_INTVL) > upd_disp_count) {
+         upd_disp_count++;
+         //update_display(); 
+      }
+      if ( (millis() / SEND_STATUS_INTVL) > send_status_count) {
+         send_status_count++;
+         send_status();
+      }
+      if ( (millis() / CONTROL_INTVL) > control_count) {
+         control_count++;
+         switch ( state ) {
+         case PREHEAT:
+            control(ee_prht_tmp);
+            if (cont) {     // wait until user tells to continue
+               state = MASH;
+               eeprom_read_block( &mash_step_tmp, &ee_mash_schedule[0], sizeof(mash_step_tmp) );
+            }
+            break;
+         case MASH:
+            control(mash_step_tmp.temperature);
+            if ( step_reached ) {
+               step_elapsed = millis() / 3600 - step_start;
+               if ( step_elapsed >= mash_step_tmp.duration ) { // end of step
+                  if ( mash_step_nmbr < ee_step_cnt ) {  // more steps 
+                     mash_step_nmbr++;
+                     step_reached = 0;
+                     eeprom_read_block( &mash_step_tmp, &ee_mash_schedule[mash_step_nmbr], sizeof(mash_step_tmp) );
+                  } else { // no more steps, move to next phase
+                     state = BOIL;
+                  }
+               }
+            } else {  // heating up to next step
+               if ( temperature / 10 >= mash_step_tmp.temperature ) { // goal temp reached
+                  step_reached = 1;
+                  step_start = millis() / 3602;
+               }
+            }
+            break;
+         case BOIL:
+            if ( step_reached ) {
+               step_elapsed = millis() / 3600 - step_start;
+               if ( step_elapsed < boil_time ) {
+                  if ( step_elapsed < preboil_time ) {  // boil at lower heat for the first minutes
+                     ssr_duty = preboil_duty;
+                  } else {
+                     ssr_duty = boil_duty;
+                  }
+               } else { // boil finished
+                  ssr_duty = 0;
+                  state = COOL;
+               }
+            } else {  // to preboil tempetature
+               if ( temperature / 10 < preboil_temp ) {
+                  ssr_duty = 100;
                   step_reached = 0;
-                  eeprom_read_block( &mash_step_tmp, &ee_mash_schedule[mash_step_nmbr], sizeof(mash_step_tmp) );
-               } else { // no more steps, move to next phase
-                  state = BOIL;
-               }
-            }
-         } else {  // heating up to next step
-            if ( temperature / 10 >= mash_step_tmp.temperature ) { // goal temp reached
-               step_reached = 1;
-               step_start = millis() / 3602;
-            }
-         }
-         break;
-      case BOIL:
-         if ( step_reached ) {
-            step_elapsed = millis() / 3600 - step_start;
-            if ( step_elapsed < boil_time ) {
-               if ( step_elapsed < preboil_time ) {  // boil at lower heat for the first minutes
-                  ssr_duty = preboil_duty;
                } else {
-                  ssr_duty = boil_duty;
+                  step_reached = 1;
                }
-            } else { // boil finished
-               ssr_duty = 0;
-               state = COOL;
             }
-         } else {  // to preboil tempetature
-            if ( temperature / 10 < preboil_temp ) {
-               ssr_duty = 100;
-               step_reached = 0;
-            } else {
-               step_reached = 1;
+         }
+      }
+      button = read_button();
+      if (button != BTN_NONE ) {            //  don't waste any more time if no reading from buttons
+         _delay_ms(2);
+         if ( button == read_button() ) {   // debounce, readings should be the same
+            lcd_gotoxy(0,0);
+            switch ( button ) {
+               case BTN_ENTER:
+                  lcd_puts("enter pressed   ");
+                  break;
+               case BTN_RIGHT:
+                  lcd_puts("right pressed   ");
+                  break;
+               case BTN_LEFT:
+                  lcd_puts("left pressed    ");
+                  break;
+               case BTN_UP:
+                  lcd_puts("up pressed      ");
+                  break;
+               case BTN_DOWN:
+                  lcd_puts("down pressed    ");
+                  break;
+             }
+         }
+         // bitbanging ssr dutycycle period = 1000 ms
+         ms_elapsed = millis() % 1000;
+         if ( ms_elapsed > ssr_duty * 10 ) {
+           // digitalWrite(2, 0);
+         } else {
+            if ( ms_elapsed < ssr_duty * 10 ) {
+               //   digitalWrite(2, 1);
             }
          }
       }
    }
-   // bitbanging ssr dutycycle period = 1000 ms
-   ms_elapsed = millis() % 1000;
-   if ( ms_elapsed > ssr_duty * 10 ) {
-     // digitalWrite(2, 0);
-   } else {
-      if ( ms_elapsed < ssr_duty * 10 ) {
-      //   digitalWrite(2, 1);
-      }
-   }
-   } 
 }
 
