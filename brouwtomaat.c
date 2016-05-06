@@ -1,8 +1,11 @@
 /*
 
-$Header: /home/atkeizer/avr/brouwtomaat/RCS/brouwtomaat.c,v 1.2 2016/04/30 09:36:57 atkeizer Exp $
+$Header: /home/atkeizer/avr/brouwtomaat/RCS/brouwtomaat.c,v 1.3 2016/05/03 05:15:41 atkeizer Exp atkeizer $
 
 $Log: brouwtomaat.c,v $
+Revision 1.3  2016/05/03 05:15:41  atkeizer
+buttons, lcd and uart functioning
+
 Revision 1.2  2016/04/30 09:36:57  atkeizer
 stdio stream output on stdout
 
@@ -14,9 +17,9 @@ Initial revision
    D0-7  = PortD 0-7
    D8-13 = PortB 0-5
    A0-5  = PortC 0-5
-   D11  PB2  SSR PWM
-   D3   PD3  Pump PWM   
-   ?    ?    OneWire
+   D11  PB3  Pump PWM   OC2A
+   D12  PB4  SSR PWM    bitbanging
+   D13  PB5  OneWire
    A0   PC0  Keypad
    D8   PB0  LCD RS
    D9   PB1  LCD Enable
@@ -28,9 +31,6 @@ Initial revision
 
 
 //OneWire  ds(11);  // on pin 10 (a 4.7K resistor is necessary)
-#define MAX_DEV 1
-unsigned char addr[MAX_DEV][8];
-char num_dev;
 
 #include "lcd.h"
 #include "onewire.h"
@@ -52,9 +52,16 @@ void uart_putchar(char c, FILE *stream) {
    uart_putc(c);
 }
 
-static FILE mystdout = FDEV_SETUP_STREAM(uart_putchar, NULL, _FDEV_SETUP_WRITE);
+static FILE uart = FDEV_SETUP_STREAM(uart_putchar, NULL, _FDEV_SETUP_WRITE);
 
-unsigned int temperatures[MAX_DEV];
+void lcd_putchar(char c, FILE *stream) {
+   lcd_write_byte(c);
+}
+
+static FILE lcd = FDEV_SETUP_STREAM(lcd_putchar, NULL, _FDEV_SETUP_WRITE);
+
+
+unsigned int temperatures[OW_MAX_DEV];
 
 // timer 0 used for time keeping
 unsigned long running_millis=0;
@@ -137,29 +144,51 @@ char pump_duty = 75;
 char ms_elapsed = 0;
 
 
-void init_timer0(){          // Timer 0 used for time keeping
+void init_timer0(){          // Timer 0 used for time keeping and SSR bitbanging
    TCCR0A = _BV(WGM01);      // CTC mode using 1024 prescaler 16 counts/ms @ 16MHz
    TCCR0B = _BV(CS02) | _BV(CS00);
-   OCR0A = 16;
+   OCR0A = 15;
    TIMSK0 |= _BV(OCIE0A);    // Timer 0 compare interrupt on OCR0A
 }
 
 ISR(TIMER0_COMPA_vect) {
+   uint8_t hundreds;
+   static uint8_t hundreds_prev;
    running_millis++;
-   if ( ! (running_millis%1000) ){
-      if ( running_time.s < 59 ) {
-         running_time.s++;
-      } else {
-         running_time.s = 0;
-         if ( running_time.m < 59 ) {
-            running_time.m++;
+   hundreds = (running_millis / 10) % 100;
+   if (hundreds != hundreds_prev ) {
+      if ( ! hundreds ){
+         if ( running_time.s < 59 ) {
+            running_time.s++;
          } else {
-            running_time.m = 0;
-            running_time.h++;
+            running_time.s = 0;
+            if ( running_time.m < 59 ) {
+               running_time.m++;
+            } else {
+               running_time.m = 0;
+               running_time.h++;
+            }
          }
+         PORTB |= _BV(PB4); // turn on SSR in beginning of period
       }
+      if ( hundreds >= ssr_duty ) { // turn off at end of duty cycle
+         PORTB &= ~_BV(PB4);
+      }
+      hundreds_prev = hundreds;
    }
 }
+
+void init_timer2(){     // use timer 2 for pump PWM
+   OCR2A = 0;
+   DDRB |= _BV(PB3);
+   TCCR2A |= _BV(COM2A1) | _BV(WGM21) | _BV(WGM20) ; // clear OC2A on compare match, fast PWM
+   TCCR2B = _BV(CS21);  // prescaler 8 gives  7.8KHz
+}
+
+void pump_pwm( uint8_t duty_cycle){  // 0-255
+   OCR2A =  duty_cycle;
+}
+
 
 unsigned long millis() {
    unsigned long ms;
@@ -170,29 +199,23 @@ unsigned long millis() {
    return ms;
 }
 
-char button_pressed(void) {
-   char button = 1;//analogRead(0)/32;
-   return button;
-}
-
 void send_setup(void) {
    char *string_format = PSTR("%18S = %s\n");
    char *number_format = PSTR("%18S = %d\n");
-   printf_P( number_format, PSTR("Preheat temp"), prht_tmp );
-   printf_P( number_format, PSTR("Boil time"), boil_time );
-   printf_P( number_format, PSTR("Preboil time"), preboil_time );
-   printf_P( number_format, PSTR("Preboil duty"), preboil_duty );
-   printf_P( number_format, PSTR("Preboil temp"), preboil_temp );
-   printf_P( number_format, PSTR("PI control Ki"), picontrol_ki );
-   printf_P( number_format, PSTR("PI control Kp"), picontrol_kp );
-   printf_P( number_format, PSTR("One wire dev"), num_dev );
+   fprintf_P(stderr, number_format, PSTR("Preheat temp"), prht_tmp );
+   fprintf_P(stderr, number_format, PSTR("Boil time"), boil_time );
+   fprintf_P(stderr, number_format, PSTR("Preboil time"), preboil_time );
+   fprintf_P(stderr, number_format, PSTR("Preboil duty"), preboil_duty );
+   fprintf_P(stderr, number_format, PSTR("Preboil temp"), preboil_temp );
+   fprintf_P(stderr, number_format, PSTR("PI control Ki"), picontrol_ki );
+   fprintf_P(stderr, number_format, PSTR("PI control Kp"), picontrol_kp );
    for (int i=0;i<step_cnt;i++) {
       uart_puts("+++++++++++ Mash Step +++++++++++\n");
       eeprom_read_block( &mash_step_tmp, &ee_mash_schedule[i], sizeof(mash_step_tmp) );
-      printf_P( number_format, PSTR("Mash step"), i);
-      printf_P( string_format, PSTR("Step name"), mash_step_tmp.name );
-      printf_P( number_format, PSTR("Temperature"), mash_step_tmp.temperature );
-      printf_P( number_format, PSTR("Duration"), mash_step_tmp.duration );
+      fprintf_P(stderr, number_format, PSTR("Mash step"), i);
+      fprintf_P(stderr, string_format, PSTR("Step name"), mash_step_tmp.name );
+      fprintf_P(stderr, number_format, PSTR("Temperature"), mash_step_tmp.temperature );
+      fprintf_P(stderr, number_format, PSTR("Duration"), mash_step_tmp.duration );
    }
 }
 
@@ -201,32 +224,32 @@ void send_status(void) {
    char *ram_string_format = PSTR("%18S = %s\n");
    char *number_format = PSTR("%18S = %d\n");
    char *time_format = PSTR("%02d:%02d:%02d\n");
-   printf_P( time_format, running_time.h, running_time.m, running_time.s);
+   fprintf_P(stderr, time_format, running_time.h, running_time.m, running_time.s);
    switch ( state ) {
    case PREPARE:
-      printf_P( string_format, PSTR("State"), PSTR("preparing"));
+      fprintf_P(stderr, string_format, PSTR("State"), PSTR("preparing"));
       break;
    case PREHEAT:
-      printf_P( string_format, PSTR("State"), PSTR("preheating"));
+      fprintf_P(stderr, string_format, PSTR("State"), PSTR("preheating"));
       break;
    case MASH:
-      printf_P( string_format, PSTR("State"), PSTR("mashing"));
-      printf_P( number_format, PSTR("Step number"), mash_step_nmbr);
-      printf_P( ram_string_format, PSTR("Step name"), mash_step_tmp.name);
-      printf_P( number_format, PSTR("Step temperature"), mash_step_tmp.temperature);
-      printf_P( number_format, PSTR("Step duration"), mash_step_tmp.duration);
-      printf_P( number_format, PSTR("Step elapsed"), step_elapsed);
+      fprintf_P(stderr, string_format, PSTR("State"), PSTR("mashing"));
+      fprintf_P(stderr, number_format, PSTR("Step number"), mash_step_nmbr);
+      fprintf_P(stderr, ram_string_format, PSTR("Step name"), mash_step_tmp.name);
+      fprintf_P(stderr, number_format, PSTR("Step temperature"), mash_step_tmp.temperature);
+      fprintf_P(stderr, number_format, PSTR("Step duration"), mash_step_tmp.duration);
+      fprintf_P(stderr, number_format, PSTR("Step elapsed"), step_elapsed);
       break;
    case BOIL:
-      printf_P( string_format, PSTR("State"), PSTR("boiling"));
-      printf_P( number_format, PSTR("Boil time elapsed"), step_elapsed);
+      fprintf_P(stderr, string_format, PSTR("State"), PSTR("boiling"));
+      fprintf_P(stderr, number_format, PSTR("Boil time elapsed"), step_elapsed);
    case COOL:
-      printf_P( string_format, PSTR("State"), PSTR("cooling"));
+      fprintf_P(stderr, string_format, PSTR("State"), PSTR("cooling"));
    }
-   printf_P( number_format, PSTR("Temperature"), temperature);
-   printf_P( number_format, PSTR("SSR duty cycle"), ssr_duty);
-   printf_P( number_format, PSTR("PUMP duty cycle"), pump_duty);
-   printf("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n");
+   fprintf_P(stderr, number_format, PSTR("Temperature"), temperature);
+   fprintf_P(stderr, number_format, PSTR("SSR duty cycle"), ssr_duty);
+   fprintf_P(stderr, number_format, PSTR("PUMP duty cycle"), pump_duty);
+   fprintf_P(stderr,PSTR("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n"));
 } 
 
 void control(char set_point) {
@@ -249,13 +272,22 @@ void control(char set_point) {
 
 int main(void) {
    uint8_t button = 0;
-   stdout = &mystdout;
+   stderr = &uart;
+   stdout = &lcd;
    lcd_init();
-   lcd_puts("initialized");
-   _delay_ms(1000);
+   lcd_clear();
    uart0_init(UART_BAUD_SELECT(9600, F_CPU));
    init_adc();
    init_timer0(); 
+   init_timer2(); 
+   pump_pwm(0);
+   DDRB |= _BV(PB4); // used for bitbanging SSR
+   if ( ! ow_rom_search() ) {
+      fprintf_P(&lcd,PSTR(" No temperature "));
+      lcd_gotoxy(0,1);
+      fprintf_P(&lcd,PSTR("sensor connected"));
+   //   while(1);
+   }
    sei();
    step_cnt     = eeprom_read_byte( &ee_step_cnt );
    prht_tmp     = eeprom_read_byte( &ee_prht_tmp );
@@ -337,35 +369,27 @@ int main(void) {
          }
       }
       button = read_button();
-      if (button != BTN_NONE ) {            //  don't waste any more time if no reading from buttons
+      if (button != BTN_NONE ) {            //  don't waste any more time if no button pressed
          _delay_ms(2);
          if ( button == read_button() ) {   // debounce, readings should be the same
             lcd_gotoxy(0,0);
             switch ( button ) {
                case BTN_ENTER:
-                  lcd_puts("enter pressed   ");
+                  //lcd_puts("enter pressed   ");
+                  printf("ENTER           ");
                   break;
                case BTN_RIGHT:
-                  lcd_puts("right pressed   ");
+                  printf("RIGHT           ");
                   break;
                case BTN_LEFT:
-                  lcd_puts("left pressed    ");
+                  printf("LEFT            ");
                   break;
                case BTN_UP:
-                  lcd_puts("up pressed      ");
+                  printf("UP              ");
                   break;
                case BTN_DOWN:
-                  lcd_puts("down pressed    ");
+                  printf("DOWN            ");
                   break;
-             }
-         }
-         // bitbanging ssr dutycycle period = 1000 ms
-         ms_elapsed = millis() % 1000;
-         if ( ms_elapsed > ssr_duty * 10 ) {
-           // digitalWrite(2, 0);
-         } else {
-            if ( ms_elapsed < ssr_duty * 10 ) {
-               //   digitalWrite(2, 1);
             }
          }
       }
