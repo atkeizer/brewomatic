@@ -1,18 +1,20 @@
 /*
 
-$Header: /home/atkeizer/avr/brouwtomaat/lcd.c,v 1.1 2016/04/30 08:44:16 atkeizer Exp atkeizer $
+$Header: /home/atkeizer/avr/brouwtomaat/lcd.c,v 1.2 2016/04/30 08:52:25 atkeizer Exp atkeizer $
 
 $Log: lcd.c,v $
+Revision 1.2  2016/04/30 08:52:25  atkeizer
+dos2unix conversion of source
+
 Revision 1.1  2016/04/30 08:44:16  atkeizer
 Initial revision
 
 
 */
 
-static char rcsid[] = "$Id: lcd.c,v 1.1 2016/04/30 08:44:16 atkeizer Exp atkeizer $";
-
 #include <avr/io.h>
 #include <util/delay.h>
+#include <avr/pgmspace.h>
 #include "lcd.h"
 
 
@@ -58,8 +60,14 @@ void lcd_char_gen(char * pixelrow){
 
 void lcd_puts(char *data){
    while ( *data ) {
-      lcd_write_byte( *data );
-      data++;
+      lcd_write_byte( *data++ );
+   }
+}
+
+void lcd_puts_p(const char *prog_data){
+   char c;
+   while ( (c = pgm_read_byte(prog_data++)) ) {
+      lcd_write_byte(c);
    }
 }
 
@@ -73,6 +81,7 @@ void lcd_clear(void){
    lcd_command_mode();
    lcd_write_byte(0x01);
    lcd_data_mode();
+   _delay_ms(2);
 }
 
 void lcd_write_nibble(char byte){
