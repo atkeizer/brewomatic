@@ -1,8 +1,11 @@
 /*
 
-$Header: /home/atkeizer/avr/brouwtomaat/lcd.c,v 1.2 2016/04/30 08:52:25 atkeizer Exp atkeizer $
+$Header: /home/atkeizer/avr/brouwtomaat/RCS/lcd.c,v 1.3 2016/05/16 08:49:39 atkeizer Exp atkeizer $
 
 $Log: lcd.c,v $
+Revision 1.3  2016/05/16 08:49:39  atkeizer
+lcd_puts_p implemented
+
 Revision 1.2  2016/04/30 08:52:25  atkeizer
 dos2unix conversion of source
 
@@ -71,9 +74,12 @@ void lcd_puts_p(const char *prog_data){
    }
 }
 
-void lcd_gotoxy(char x, char y){
+void lcd_gotoxy(char x, char y){ // 4x20 display
    lcd_command_mode();
-   lcd_write_byte( 0x80 + y * 0x40 + x);
+   if (y==0) lcd_write_byte(0x80 + x);
+   if (y==1) lcd_write_byte(0x80 + 0x40 + x);
+   if (y==2) lcd_write_byte(0x80 + 20 + x);
+   if (y==3) lcd_write_byte(0x80 + 0x40 + 20 + x);
    lcd_data_mode();
 }
 
