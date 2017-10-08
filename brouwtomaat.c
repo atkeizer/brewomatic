@@ -23,10 +23,14 @@ Arduino port mappings
    D0-7  = PortD 0-7
    D8-13 = PortB 0-5
    A0-5  = PortC 0-5
+   D10  PB2  OneWire
    D11  PB3  Pump PWM   OC2A
    D12  PB4  SSR PWM    bitbanging
-   D13  PB5  OneWire
-   A0   PC0  Keypad
+   A0   PC0  Touchpad enter
+   A1   PC1  Touchpad right
+   A2   PC2  Touchpad up
+   A3   PC3  Touchpad down
+   A4   PC4  Touchpad left
    D8   PB0  LCD RS
    D9   PB1  LCD Enable
    D4   PD4  LCD D4
@@ -36,12 +40,7 @@ Arduino port mappings
 */
 
 
-//OneWire  ds(11);  // on pin 10 (a 4.7K resistor is necessary)
-
-#include "lcd.h"
-#include "onewire.h"
-#include "uart.h"
-#include "button.h"
+//OneWire  ds(13);  // on pin 13 (a 4.7K resistor is necessary)
 
 #include <avr/io.h>
 #include <stdio.h>
@@ -49,6 +48,12 @@ Arduino port mappings
 #include <avr/eeprom.h>
 #include <avr/pgmspace.h>
 #include <avr/interrupt.h>
+
+#include "lcd.h"
+#include "onewire.h"
+#include "uart.h"
+#include "menu.h"
+#include "touch.h"
 
 
 void uart_putchar(char c, FILE *stream) {
@@ -58,9 +63,6 @@ void uart_putchar(char c, FILE *stream) {
 }
 
 static FILE uart = FDEV_SETUP_STREAM(uart_putchar, NULL, _FDEV_SETUP_WRITE);
-
-
-unsigned int temperatures[OW_MAX_DEV];
 
 unsigned long running_hundreds=0;
 
@@ -88,7 +90,7 @@ struct time running_time = {0, 0, 0};
 #define COMPLETED = 1;
 
 
-// global variables for PID controller so they can be read outside ISR for tuning purposes
+// global variables for PID controller so they can be accessed outside ISR for tuning purposes
 double pid_kp, pid_ki, pid_kd, pid_setpoint, pid_integral, pid_prev_error, pid_error, pid_feedback, pid_prop, pid_derivative;
 
 
@@ -142,108 +144,31 @@ char state = PREHEAT;
 uint8_t mash_step_nmbr = 0;
 char cont = 0;
 char ssr_duty = 0;
-char pump_duty = 75;
+char pump_duty = 0;
 
 
-void do_a(void) {
-   lcd_gotoxy(0,0);
-   lcd_puts_p(PSTR("Menu item A procd"));
-}
-
-void do_b(void) {
-   lcd_gotoxy(0,0);
-   lcd_puts_p(PSTR("Menu item B procd"));
-}
-
-void do_c(void) {
-   lcd_gotoxy(0,0);
-   lcd_puts_p(PSTR("Menu item C procd"));
-}
-
-typedef struct menu_item{
-   const char * title;
-   //const f_ptr action;
-   void (*action)(void);
-   struct menu_item * parent;
-   struct menu_item * next;
-   struct menu_item * prev;
-} menu_item_t;
- 	
-const char title1[] PROGMEM = "Item A";
-const char title2[] PROGMEM = "Item B";
-const char title3[] PROGMEM = "Item C";
-
-menu_item_t item_a, item_b, item_c;
-
-menu_item_t item_a = {
-  .title = title1,
-  .action = &do_a,
-  .parent = NULL,
-  .next = &item_b,
-  .prev = &item_c,
-};
-   
-menu_item_t item_b = {
-  .title = title2,
-  .action = &do_b,
-  .parent = NULL,
-  .next = &item_c,
-  .prev = &item_a,
-};
-   
-menu_item_t item_c = {
-  .title = title3,
-  .action = &do_c,
-  .parent = NULL,
-  .next = &item_a,
-  .prev = &item_b,
-};
-   
-void process_menu(uint8_t button) {
-   static menu_item_t *current_item  = &item_a;
-   switch ( button ) {
-            case BTN_ENTER:
-               break;
-            case BTN_RIGHT:
-               current_item  = current_item->next;
-               current_item->action();
-               break;
-            case BTN_LEFT:
-               current_item  = current_item->prev;
-               current_item->action();
-               break;
-            case BTN_UP:
-               break;
-            case BTN_DOWN:
-               break;
-   }
-   printf( "%S\n", current_item->title );
-}
-
-
-void init_timer1(){           // Timer 1 used for time keeping and SSR bitbanging
+void init_timer1(){           // Timer 1 used for time keeping and SSR bitbanging (10mS interval)
    TCCR1B = _BV(WGM12) | _BV(CS12); // CTC mode with OCR1A as compare using 256 prescaler
    TCNT1 = 0;
    OCR1A = 624;               // 625 counts per hundred @ 16MHz
    TIMSK1 |= _BV(OCIE1A);     // Timer 0 compare interrupt on OCR1A
 }
 
-ISR(TIMER1_COMPA_vect) {
-   uint8_t sec_fract;
+ISR(TIMER1_COMPA_vect) {  // called every 10 mS
    running_hundreds++;
-   sec_fract = running_hundreds  % 100; 
+   uint8_t sec_fract = running_hundreds  % 100; 
    if ( ! sec_fract ){                                // every second
-      pid_error = pid_setpoint - temperature;         // PID control temperature
-      pid_prop = pid_error * pid_kp;  
-      if (pid_prop > 100) pid_integral = 0;           // only integrate in controllable range
-      else pid_integral += pid_error * pid_ki;
-      pid_derivative = (pid_error - pid_prev_error) * pid_kd;
-      if ( pid_integral > 100 ) pid_integral = 100;
-      if ( pid_integral < 0 ) pid_integral = 0;
-      pid_feedback = pid_prop + pid_integral + pid_derivative;
-      if ( pid_feedback > 100 ) pid_feedback = 100;
-      if ( pid_feedback < 0 ) pid_feedback = 0;
-      ssr_duty = (uint8_t) pid_feedback;
+      //pid_error = pid_setpoint - temperature;         // PID control temperature
+      //pid_prop = pid_error * pid_kp;  
+      //if (pid_prop > 100) pid_integral = 0;           // only integrate in controllable range
+      //else pid_integral += pid_error * pid_ki;
+      //pid_derivative = (pid_error - pid_prev_error) * pid_kd;
+      //if ( pid_integral > 100 ) pid_integral = 100;
+      //if ( pid_integral < 0 ) pid_integral = 0;
+      //pid_feedback = pid_prop + pid_integral + pid_derivative;
+      //if ( pid_feedback > 100 ) pid_feedback = 100;
+      //if ( pid_feedback < 0 ) pid_feedback = 0;
+      //ssr_duty = (uint8_t) pid_feedback;
 
       if ( running_time.s < 59 ) {  // update HMS clock
          running_time.s++;
@@ -263,7 +188,7 @@ ISR(TIMER1_COMPA_vect) {
    }
 }
 
-void init_vars(){
+void vars_from_eeprom(){  // get values from eeprom
    eeprom_read_block( &pid_kp, &ee_pid_kp, sizeof(pid_kp) );
    eeprom_read_block( &pid_ki, &ee_pid_ki, sizeof(pid_ki) );
    eeprom_read_block( &pid_kd, &ee_pid_kd, sizeof(pid_kd) );
@@ -286,6 +211,11 @@ void init_timer2(){     // use timer 2 for pump PWM
 void pump_pwm( uint8_t duty_cycle){  // 0-255
    OCR2A =  duty_cycle;
 }
+
+void heater_duty( uint8_t duty_cycle){  // 0-100
+   ssr_duty = duty_cycle;
+}
+
 
 
 unsigned long hundreds() {
@@ -310,8 +240,8 @@ void send_setup(void) {
    printf_P(float_format, PSTR("PID control Ki"), pid_ki );
    printf_P(float_format, PSTR("PID control Kd"), pid_kd );
    for (int i=0;i<step_cnt;i++) {
-      uart_puts("+++++++++++ Mash Step +++++++++++\n");
       eeprom_read_block( &mash_step_tmp, &ee_mash_schedule[i], sizeof(mash_step_tmp) );
+      printf_P(PSTR("+++++++++++ Mash Step +++++++++++\n"));
       printf_P(number_format, PSTR("Mash step"), i);
       printf_P(string_format, PSTR("Step name"), mash_step_tmp.name );
       printf_P(number_format, PSTR("Temperature"), mash_step_tmp.temperature );
@@ -333,7 +263,7 @@ void send_status(void) {
    case PREHEAT:
       printf_P(string_format, PSTR("State"), PSTR("preheating"));
       break;
-case MASH:
+   case MASH:
       printf_P(string_format, PSTR("State"), PSTR("mashing"));
       printf_P(number_format, PSTR("Step number"), mash_step_nmbr);
       printf_P(ram_string_format, PSTR("Step name"), mash_step_tmp.name);
@@ -351,7 +281,25 @@ case MASH:
    printf_P(number_format, PSTR("SSR duty cycle"), ssr_duty);
    printf_P(number_format, PSTR("PUMP duty cycle"), pump_duty);
    fprintf_P(stderr,PSTR("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n"));
+   // simulate kettle 
+   //temperature = temperature + pid_feedback / 2000 - 0.01;
+   //pid_prev_error = pid_error;
+   //fprintf_P(&uart, PSTR("T=%.3f, S=%.1f, E=%.3f, P=%.1f, I=%.1f, D=%.1f, F=%.1f\n"), temperature, pid_setpoint, pid_error, pid_prop, pid_integral, pid_derivative, pid_feedback );
 } 
+
+
+void update_display() {
+   char buf[21];
+   lcd_gotoxy(0,2);
+   sprintf_P(buf, PSTR("SSR = %d  Pump = %d"), ssr_duty, pump_duty);
+   lcd_puts(buf);
+   lcd_gotoxy(0,3);
+   sprintf_P(buf, PSTR("%2d:%02d:%02d     %3.1f \337C"), 
+             running_time.h, running_time.m, running_time.s, temperature);
+   lcd_puts(buf);
+}
+   
+
 
 
 void set_pid(double setpoint) {
@@ -362,47 +310,51 @@ void set_pid(double setpoint) {
    SREG=sreg;
 }
 
-
 int main(void) {
-   uint8_t button = BTN_NONE;
-   uint8_t btn_tmp, btn_debounce=0;
+   uint8_t button, btn_prev, btn_rpt=0, err;
    unsigned long btn_time = 0;
+   char line_buf[20];
    stdout = &uart;
    _delay_ms(100);
-   init_vars();    // initialize variables / read from eeprom
+   vars_from_eeprom();    // initialize variables / read from eeprom
    lcd_init();
    _delay_ms(100);
    lcd_clear();
    _delay_ms(100);
    uart0_init(UART_BAUD_SELECT(9600, F_CPU));
-   init_adc();
+   //init_adc();
+   //touch_init();
    init_timer1(); 
    init_timer2(); 
    pump_pwm(0);    // pump initially off
+   sei();
    DDRB |= _BV(PB4); // used for bitbanging SSR
    if ( ! ow_rom_search() ) {
+      printf_P(PSTR("No temperature sensor found\n"));
       lcd_puts_p(PSTR(" No temperature "));
       lcd_gotoxy(0,1);
       lcd_puts_p(PSTR("sensor connected"));
-   //   while(1);
+      while(1);
+   } else {
+   //  lcd_gotoxy(0,0);
+   //  lcd_puts_p(PSTR("Temperature sensor found"));
    }
-   sei();
-//   ds18b20_10bit(); // set resolution of ds18b20 
-   send_setup();
+   ds18b20_10bit(); // set resolution of ds18b20 
+   //send_setup();
    while(1) {
-//   if ( (hundreds() / TMP_MEAS_INTVL) > tmp_meas_count ) {
-//      //get measurement from ds18b20
-//      ds18b20_results();
-//      //and start next conversion
-//      ds18b20_conv();
-//   }
+      if ( (hundreds() / TMP_MEAS_INTVL) > tmp_meas_count ) {
+         tmp_meas_count++;
+         //get measurement from ds18x20
+         lcd_gotoxy(0,3);
+         err = read_ds18x20(romcodes[0], &temperature);
+         if (err == 1 ) lcd_puts_p(PSTR("CRC error "));
+         else if (err == 2 ) lcd_puts_p(PSTR("not a DS18x20 "));
+         //and start next conversion
+         start_conv_ds18x20(0); // id=0 means all
+      }
       if ( (hundreds() / UPD_DISP_INTVL) > upd_disp_count) {
          upd_disp_count++;
-         //update_display(); 
-         // simulate kettle 
-         //temperature = temperature + pid_feedback / 2000 - 0.01;
-         //pid_prev_error = pid_error;
-         //fprintf_P(&uart, PSTR("T=%.3f, S=%.1f, E=%.3f, P=%.1f, I=%.1f, D=%.1f, F=%.1f\n"), temperature, pid_setpoint, pid_error, pid_prop, pid_integral, pid_derivative, pid_feedback );
+         update_display(); 
       }
       if ( (hundreds() / SEND_STATUS_INTVL) > send_status_count) {
          send_status_count++;
@@ -442,12 +394,12 @@ int main(void) {
             step_elapsed = hundreds() / 360 - step_start;
             if ( step_elapsed < boil_time ) {
                if ( step_elapsed < preboil_time ) {  // boil at lower heat for the first minutes
-                  ssr_duty = preboil_duty;
+                  //ssr_duty = preboil_duty;
                } else {
-                  ssr_duty = boil_duty;
+                  //ssr_duty = boil_duty;
                }
             } else { // boil finished
-               ssr_duty = 0;
+               //ssr_duty = 0;
                state = COOL;
             }
          } else {  // to preboil tempetature
@@ -459,28 +411,20 @@ int main(void) {
             }
          }
       }
-      if ( (hundreds() - btn_time > BTN_INTVL) || btn_debounce ) {
-         if ( button == BTN_NONE ) {    // button state is cleared
-            btn_tmp = read_button();
-            if ( read_button() != BTN_NONE ) {
-               if ( !btn_debounce ) { 
-                  btn_time = hundreds(); // start measuring time for debouncing and repeat timing
-                  btn_debounce = 1;      // set flag to identify debounce in progress
-               }
-            }
-            // when the same value is read after the debounce interval ...
-            if ( hundreds() - btn_time > BTN_DEBOUNCE ) {
-               if ( btn_tmp == read_button() ) {
-                  button = btn_tmp;
-                  btn_debounce = 0;
-               } else
-                  button = BTN_NONE;  
-            } else  button = BTN_NONE;  
-         } 
-      }   
-      if ( button != BTN_NONE ) { 
-         process_menu(button);
-         button = BTN_NONE;
+      // hysteresis on buttons
+      if (touch_state == 0) {
+         button = touch_scan_all();
+         if (button) {
+            touch_state = 1;
+            process_menu(button);
+         }
+      }
+
+
+      if ( touch_state == 1 ) {
+         if (touch_scan_released()){
+            touch_state = 0;
+         }
       }
    }
 }
