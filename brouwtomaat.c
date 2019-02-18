@@ -1,8 +1,11 @@
 /*
 
-$Header: /home/atkeizer/avr/brouwtomaat/RCS/brouwtomaat.c,v 1.7 2017/10/08 08:50:54 atkeizer Exp atkeizer $
+$Header: /home/atkeizer/brouwtomaat/RCS/brouwtomaat.c,v 1.8 2022/05/24 09:15:36 atkeizer Exp $
 
 $Log: brouwtomaat.c,v $
+Revision 1.8  2022/05/24 09:15:36  atkeizer
+Some counter with larger datatype and faster baud rate
+
 Revision 1.7  2017/10/08 08:50:54  atkeizer
 simple manual control only
 

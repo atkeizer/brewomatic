@@ -1,8 +1,11 @@
 /*
 
-$Header: /home/atkeizer/avr/brouwtomaat/RCS/lcd.c,v 1.3 2016/05/16 08:49:39 atkeizer Exp atkeizer $
+$Header: /home/atkeizer/brouwtomaat/RCS/lcd.c,v 1.4 2016/10/08 22:00:11 atkeizer Exp $
 
 $Log: lcd.c,v $
+Revision 1.4  2016/10/08 22:00:11  atkeizer
+set for 20 x 4 char display
+
 Revision 1.3  2016/05/16 08:49:39  atkeizer
 lcd_puts_p implemented
 

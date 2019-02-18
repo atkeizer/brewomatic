@@ -1,8 +1,11 @@
 /*
 
-$Header$
+$Header: /home/atkeizer/brouwtomaat/RCS/button.h,v 1.1 2016/05/03 05:18:01 atkeizer Exp $
 
-$Log$
+$Log: button.h,v $
+Revision 1.1  2016/05/03 05:18:01  atkeizer
+Initial revision
+
 
 */
 

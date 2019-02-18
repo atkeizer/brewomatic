@@ -1,8 +1,11 @@
 /*
 
-$Header$
+$Header: /home/atkeizer/brouwtomaat/RCS/menu.h,v 1.1 2017/10/09 08:20:34 atkeizer Exp $
 
-$Log$
+$Log: menu.h,v $
+Revision 1.1  2017/10/09 08:20:34  atkeizer
+Initial revision
+
 
 */
 

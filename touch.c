@@ -1,8 +1,11 @@
 /*
 
-$Header$
+$Header: /home/atkeizer/brouwtomaat/RCS/touch.c,v 1.1 2016/10/07 22:00:21 atkeizer Exp $
 
-$Log$
+$Log: touch.c,v $
+Revision 1.1  2016/10/07 22:00:21  atkeizer
+Initial revision
+
 
 */
 

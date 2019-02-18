@@ -1,8 +1,11 @@
 /*
 
-$Header: /home/atkeizer/avr/brouwtomaat/lcd.h,v 1.1 2016/04/30 08:55:00 atkeizer Exp atkeizer $
+$Header: /home/atkeizer/brouwtomaat/RCS/lcd.h,v 1.2 2016/05/16 08:50:14 atkeizer Exp $
 
 $Log: lcd.h,v $
+Revision 1.2  2016/05/16 08:50:14  atkeizer
+lcd_puts_p added
+
 Revision 1.1  2016/04/30 08:55:00  atkeizer
 Initial revision
 
