@@ -1,8 +1,11 @@
 /*
 
-$Header: /home/atkeizer/avr/brouwtomaat/RCS/brouwtomaat.c,v 1.5 2016/05/11 16:07:37 atkeizer Exp atkeizer $
+$Header: /home/atkeizer/avr/brouwtomaat/RCS/brouwtomaat.c,v 1.7 2017/10/08 08:50:54 atkeizer Exp atkeizer $
 
 $Log: brouwtomaat.c,v $
+Revision 1.7  2017/10/08 08:50:54  atkeizer
+simple manual control only
+
 Revision 1.5  2016/05/11 16:07:37  atkeizer
 PID using floats
 
@@ -131,10 +134,10 @@ uint8_t preboil_time;
 uint8_t preboil_duty;
 uint8_t preboil_temp;
 
-int tmp_meas_count = 0;
-int upd_disp_count = 0;
-int send_status_count = 0;
-int control_count = 0;
+unsigned long tmp_meas_count = 0;
+unsigned long upd_disp_count = 0;
+unsigned long send_status_count = 0;
+unsigned long control_count = 0;
 char step_start;
 char step_elapsed;
 char step_reached = 0;
@@ -321,7 +324,7 @@ int main(void) {
    _delay_ms(100);
    lcd_clear();
    _delay_ms(100);
-   uart0_init(UART_BAUD_SELECT(9600, F_CPU));
+   uart0_init(UART_BAUD_SELECT(115200, F_CPU));
    //init_adc();
    //touch_init();
    init_timer1(); 
@@ -334,13 +337,24 @@ int main(void) {
       lcd_puts_p(PSTR(" No temperature "));
       lcd_gotoxy(0,1);
       lcd_puts_p(PSTR("sensor connected"));
-      while(1);
    } else {
-   //  lcd_gotoxy(0,0);
-   //  lcd_puts_p(PSTR("Temperature sensor found"));
+     lcd_gotoxy(0,0);
+     lcd_puts_p(PSTR("Temperature sensor found"));
    }
    ds18b20_10bit(); // set resolution of ds18b20 
    //send_setup();
+
+// test SPI slave for wifi module
+// to be moved to its own source file
+
+// polled slave initialization
+// MISO as output
+// set SPE bit in SPCR register
+// clear SPI interrupt by reading SPSR and SPDR
+
+
+
+
    while(1) {
       if ( (hundreds() / TMP_MEAS_INTVL) > tmp_meas_count ) {
          tmp_meas_count++;
@@ -358,7 +372,7 @@ int main(void) {
       }
       if ( (hundreds() / SEND_STATUS_INTVL) > send_status_count) {
          send_status_count++;
-         //send_status();
+         send_status();
       }
       // below is executed every cycle
       switch ( state ) {
